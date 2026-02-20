@@ -2,6 +2,8 @@
 
 **MERK-BREP** is a prototype implementation of a decentralized message relay system with end-to-end encryption. The system consists of relay servers forming a mesh network and a browser-based client SDK. It allows clients to exchange messages (text, JSON, files) through the relay network even if they are behind NAT or have no direct connection. The project is experimental and intended for research and demonstration purposes; it is not production-ready.
 
+![screen](./docs/welcome.jpg)
+
 ## Overview
 
 The protocol uses WebSocket as the transport layer. All communication is framed with a binary header containing a magic number, protocol version, message type, sender ID (Ed25519 public key), and an optional signature (Ed25519). The payload can carry various types of data.
