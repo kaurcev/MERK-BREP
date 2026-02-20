@@ -4,6 +4,76 @@
 
 ![screen](./docs/welcome.jpg)
 
+```mermaid
+flowchart TD
+    subgraph Client_SDK["Browser Client (SDK)"]
+        KM[KeyManager<br/>Ed25519 + X25519]
+        CM[ConnectionManager<br/>WebSocket]
+        SM[ServerManager<br/>server list]
+        MH[MessageHandler]
+        Storage[(IndexedDB / localStorage)]
+    end
+
+    subgraph Server["Relay Server (Node.js)"]
+        direction TB
+        WSS[WebSocketServerAdapter]
+        MD[MessageDispatcher]
+        HH[HandshakeHandler]
+        DH[DataHandler]
+        NIH[NodeInfoHandler]
+        CLS[ClientLocationService]
+        SPS[ServerPeerService]
+        CR[InMemoryClientRepository]
+        SR[InMemoryServerPeerRepository]
+        LOG[Logger]
+    end
+
+    subgraph Peers["Other Relay Servers"]
+        Peer1[Server Peer]
+        Peer2[Server Peer]
+    end
+
+    subgraph Client_App["Client Application (Browser)"]
+        UI[HTML/JS UI]
+    end
+
+    %% Client internal connections
+    UI -->|uses| Client
+    Client -->|manages| CM
+    Client -->|manages| SM
+    Client -->|invokes| MH
+    KM -->|signs/encrypts| MH
+    Storage -->|stores keys & servers| KM & SM
+
+    %% Client-server connection
+    CM -->|WebSocket| WSS
+
+    %% Server internal routing
+    WSS -->|accepts connections| MD
+    MD -->|routes by message type| HH
+    MD -->|routes| DH
+    MD -->|routes| NIH
+
+    HH -->|authenticates| CR & SR
+    DH -->|delivers locally| CR
+    DH -->|if client not local| CLS
+    CLS -->|queries| SPS
+    SPS -->|broadcasts to peers| Peers
+    NIH -->|handles discovery| SR
+    NIH -->|responds to queries| SPS
+
+    CR -->|stores clients| CR
+    SR -->|stores peers| SR
+
+    SPS -->|connects to peers| Peers
+    Peers -->|exchange NodeInfo| SPS
+
+    %% Message flows (handshake, data, discovery)
+    style Client fill:#e1f5fe,stroke:#01579b
+    style Server fill:#fff9c4,stroke:#f57f17
+    style Peers fill:#f1f8e9,stroke:#33691e
+```
+
 ## Overview
 
 The protocol uses WebSocket as the transport layer. All communication is framed with a binary header containing a magic number, protocol version, message type, sender ID (Ed25519 public key), and an optional signature (Ed25519). The payload can carry various types of data.
@@ -182,3 +252,5 @@ This program is free software: you can redistribute it and/or modify it under th
 This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+
