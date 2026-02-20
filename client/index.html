@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MERK-BREP (minimal)</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 0 20px;
+    }
+    .flex {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .flex > div {
+      flex: 1 1 300px;
+    }
+    .key-box {
+      background: #f0f0f0;
+      padding: 8px;
+      border-radius: 4px;
+      word-break: break-all;
+      font-family: monospace;
+    }
+    .log-area {
+      background: #000;
+      color: #0f0;
+      padding: 10px;
+      border-radius: 5px;
+      height: 300px;
+      overflow-y: scroll;
+      font-family: monospace;
+    }
+    .log-entry {
+      margin: 2px 0;
+    }
+    .status {
+      font-weight: bold;
+    }
+    .error {
+      color: #f44;
+    }
+    .success {
+      color: #2a2;
+    }
+    input, textarea, select {
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 5px;
+      box-sizing: border-box;
+    }
+    button {
+      margin: 5px 5px 5px 0;
+      padding: 5px 10px;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 5px;
+      overflow: auto;
+    }
+    ul {
+      padding-left: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="flex">
+    <div>
+      <h2>Identity</h2>
+      <p><strong>Public key (sign, hex):</strong></p>
+      <div id="myKey" class="key-box"></div>
+      <p><strong>Encryption public key (hex):</strong></p>
+      <div id="myEncKey" class="key-box"></div>
+      <p><strong>Nick:</strong> <input type="text" id="nick" placeholder="Your nick" /></p>
+      <button id="saveNick">Save Nick</button>
+      <button id="exportKeys">Export Keys (base64)</button>
+      <button id="importKeys">Import Keys</button>
+      <div id="importArea" style="display:none; margin-top:10px;">
+        <textarea id="importData" rows="4" placeholder='Paste JSON with publicKey, privateKey, encryptionPublicKey, encryptionPrivateKey'></textarea>
+        <button id="doImport">Apply Import</button>
+      </div>
+    </div>
+
+    <div>
+      <h2>Servers</h2>
+      <input type="text" id="serverAddress" placeholder="ws://localhost:8080" />
+      <button id="addServer">Add Server</button>
+      <button id="requestServers">Request Servers List</button>
+      <ul id="serverList"></ul>
+      <button id="connect" disabled>Connect to selected</button>
+      <button id="disconnect" disabled>Disconnect</button>
+      <p id="connectionStatus" class="status">Not connected</p>
+    </div>
+
+    <div>
+      <h2>Send Unencrypted</h2>
+      <input type="text" id="targetKey" placeholder="Target public key (hex)" />
+      <select id="dataType">
+        <option value="text">Plain text</option>
+        <option value="json">JSON</option>
+        <option value="file">File</option>
+      </select>
+      <div id="textInput">
+        <textarea id="textContent" rows="3" placeholder="Message text"></textarea>
+      </div>
+      <div id="jsonInput" style="display:none;">
+        <textarea id="jsonContent" rows="3" placeholder='{"hello":"world"}'></textarea>
+      </div>
+      <div id="fileInput" style="display:none;">
+        <input type="file" id="fileContent" />
+      </div>
+      <button id="sendBtn">Send Unencrypted</button>
+    </div>
+
+    <div>
+      <h2>Send Encrypted (E2EE)</h2>
+      <input type="text" id="targetKeyEnc" placeholder="Target public key (hex)" />
+      <input type="text" id="targetEncKey" placeholder="Recipient encryption public key (hex)" />
+      <select id="dataTypeEnc">
+        <option value="text">Plain text</option>
+        <option value="json">JSON</option>
+        <option value="file">File</option>
+      </select>
+      <div id="textInputEnc">
+        <textarea id="textContentEnc" rows="3" placeholder="Message text"></textarea>
+      </div>
+      <div id="jsonInputEnc" style="display:none;">
+        <textarea id="jsonContentEnc" rows="3" placeholder='{"hello":"world"}'></textarea>
+      </div>
+      <div id="fileInputEnc" style="display:none;">
+        <input type="file" id="fileContentEnc" />
+      </div>
+      <button id="sendEncryptedBtn">Send Encrypted</button>
+    </div>
+  </div>
+
+  <hr/>
+  <h2>Log</h2>
+  <div id="log" class="log-area"></div>
+
+  <script type="module">
+    import { Client, IndexedDBStorage, ContentType } from './sdk/index.ts';
+
+    const logDiv = document.getElementById('log');
+    const myKeySpan = document.getElementById('myKey');
+    const myEncKeySpan = document.getElementById('myEncKey');
+    const nickInput = document.getElementById('nick');
+    const saveNickBtn = document.getElementById('saveNick');
+    const exportKeysBtn = document.getElementById('exportKeys');
+    const importKeysBtn = document.getElementById('importKeys');
+    const importArea = document.getElementById('importArea');
+    const importData = document.getElementById('importData');
+    const doImportBtn = document.getElementById('doImport');
+    const serverAddressInput = document.getElementById('serverAddress');
+    const addServerBtn = document.getElementById('addServer');
+    const requestServersBtn = document.getElementById('requestServers');
+    const serverList = document.getElementById('serverList');
+    const connectBtn = document.getElementById('connect');
+    const disconnectBtn = document.getElementById('disconnect');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const targetKeyInput = document.getElementById('targetKey');
+    const dataTypeSelect = document.getElementById('dataType');
+    const textInputDiv = document.getElementById('textInput');
+    const jsonInputDiv = document.getElementById('jsonInput');
+    const fileInputDiv = document.getElementById('fileInput');
+    const textContent = document.getElementById('textContent');
+    const jsonContent = document.getElementById('jsonContent');
+    const fileContent = document.getElementById('fileContent');
+    const sendBtn = document.getElementById('sendBtn');
+    const targetKeyEnc = document.getElementById('targetKeyEnc');
+    const targetEncKey = document.getElementById('targetEncKey');
+    const dataTypeEnc = document.getElementById('dataTypeEnc');
+    const textInputEnc = document.getElementById('textInputEnc');
+    const jsonInputEnc = document.getElementById('jsonInputEnc');
+    const fileInputEnc = document.getElementById('fileInputEnc');
+    const textContentEnc = document.getElementById('textContentEnc');
+    const jsonContentEnc = document.getElementById('jsonContentEnc');
+    const fileContentEnc = document.getElementById('fileContentEnc');
+    const sendEncryptedBtn = document.getElementById('sendEncryptedBtn');
+
+    function addLog(msg, className = '') {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + className;
+      entry.textContent = new Date().toLocaleTimeString() + ': ' + msg;
+      logDiv.appendChild(entry);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    const storage = new IndexedDBStorage();
+    const client = new Client(storage);
+    await client.init();
+
+    myKeySpan.textContent = client.getPublicKeyHex();
+    const encKey = client.getEncryptionPublicKey();
+    myEncKeySpan.textContent = Array.from(encKey).map(b => b.toString(16).padStart(2,'0')).join('');
+    nickInput.value = client.getNick();
+
+    async function refreshServerList() {
+      const servers = await client.getServers();
+      const selected = await client.getSelectedServer();
+      serverList.innerHTML = '';
+      servers.forEach(addr => {
+        const li = document.createElement('li');
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'server';
+        radio.value = addr;
+        radio.checked = (addr === selected);
+        radio.addEventListener('change', async () => {
+          await client.selectServer(addr);
+          updateConnectButton();
+        });
+        li.appendChild(radio);
+        li.appendChild(document.createTextNode(' ' + addr));
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = 'Remove';
+        removeBtn.style.marginLeft = '10px';
+        removeBtn.addEventListener('click', async () => {
+          await client.removeServer(addr);
+          refreshServerList();
+          updateConnectButton();
+        });
+        li.appendChild(removeBtn);
+        serverList.appendChild(li);
+      });
+      updateConnectButton();
+    }
+    refreshServerList();
+
+    async function updateConnectButton() {
+      const selected = await client.getSelectedServer();
+      connectBtn.disabled = !selected;
+    }
+
+    dataTypeSelect.addEventListener('change', () => {
+      textInputDiv.style.display = 'none';
+      jsonInputDiv.style.display = 'none';
+      fileInputDiv.style.display = 'none';
+      if (dataTypeSelect.value === 'text') textInputDiv.style.display = 'block';
+      else if (dataTypeSelect.value === 'json') jsonInputDiv.style.display = 'block';
+      else if (dataTypeSelect.value === 'file') fileInputDiv.style.display = 'block';
+    });
+
+    dataTypeEnc.addEventListener('change', () => {
+      textInputEnc.style.display = 'none';
+      jsonInputEnc.style.display = 'none';
+      fileInputEnc.style.display = 'none';
+      if (dataTypeEnc.value === 'text') textInputEnc.style.display = 'block';
+      else if (dataTypeEnc.value === 'json') jsonInputEnc.style.display = 'block';
+      else if (dataTypeEnc.value === 'file') fileInputEnc.style.display = 'block';
+    });
+
+    saveNickBtn.onclick = async () => {
+      const nick = nickInput.value.trim() || 'Anonymous';
+      await client.setNick(nick);
+      addLog(`Nick saved: ${nick}`, 'success');
+    };
+
+    exportKeysBtn.onclick = () => {
+      try {
+        const keys = client.exportKeys();
+        const exportStr = JSON.stringify(keys, null, 2);
+        navigator.clipboard?.writeText(exportStr).catch(() => {});
+        addLog(`Keys exported (base64). Copied to clipboard?`, 'success');
+        alert('Keys (base64):\n\n' + exportStr);
+      } catch (e) {
+        addLog(`Export error: ${e.message}`, 'error');
+      }
+    };
+
+    importKeysBtn.onclick = () => {
+      importArea.style.display = importArea.style.display === 'none' ? 'block' : 'none';
+    };
+
+    doImportBtn.onclick = async () => {
+      try {
+        const data = JSON.parse(importData.value);
+        if (!data.publicKey || !data.privateKey || !data.encryptionPublicKey || !data.encryptionPrivateKey) {
+          throw new Error('Missing required fields');
+        }
+        await client.importKeys(data);
+        addLog('Keys imported successfully', 'success');
+        myKeySpan.textContent = client.getPublicKeyHex();
+        const encKey = client.getEncryptionPublicKey();
+        myEncKeySpan.textContent = Array.from(encKey).map(b => b.toString(16).padStart(2,'0')).join('');
+        importArea.style.display = 'none';
+        importData.value = '';
+      } catch (e) {
+        addLog(`Import error: ${e.message}`, 'error');
+      }
+    };
+
+    addServerBtn.onclick = async () => {
+      const addr = serverAddressInput.value.trim();
+      if (!addr) return;
+      await client.addServer(addr);
+      serverAddressInput.value = '';
+      refreshServerList();
+      addLog(`Server added: ${addr}`, 'success');
+    };
+
+    requestServersBtn.onclick = async () => {
+      try {
+        if (!client.isConnected()) {
+          addLog('Not connected', 'error');
+          return;
+        }
+        await client.requestServerList();
+        addLog('Requested servers list', 'info');
+      } catch (e) {
+        addLog(`Request failed: ${e.message}`, 'error');
+      }
+    };
+
+    connectBtn.onclick = async () => {
+      const selected = await client.getSelectedServer();
+      if (!selected) return;
+      try {
+        addLog(`Connecting to ${selected}...`, 'info');
+        await client.connect(selected);
+        connectionStatus.textContent = `Connected to ${selected}`;
+        connectionStatus.className = 'status success';
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+      } catch (e) {
+        addLog(`Connection failed: ${e.message}`, 'error');
+        connectionStatus.textContent = 'Connection failed';
+        connectionStatus.className = 'status error';
+      }
+    };
+
+    disconnectBtn.onclick = () => {
+      client.disconnect();
+      connectionStatus.textContent = 'Disconnected';
+      connectionStatus.className = 'status';
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+    };
+
+    client.on('connected', (url) => {
+      addLog(`Connected to ${url}`, 'success');
+    });
+
+    client.on('disconnected', () => {
+      addLog('Disconnected', 'info');
+    });
+
+    client.on('serversDiscovered', (addresses) => {
+      addLog(`Discovered new servers: ${addresses.join(', ')}`, 'info');
+      refreshServerList();
+    });
+
+    client.on('serversChanged', () => {
+      refreshServerList();
+    });
+
+    client.on('error', (err) => {
+      addLog(`Error: ${err.message}`, 'error');
+    });
+
+    client.on('message', (from, content, contentType, parsed) => {
+      const fromHex = Array.from(from).map(b => b.toString(16).padStart(2,'0')).join('').slice(0,8);
+      let display = '';
+      if (contentType === ContentType.TEXT) {
+        display = `From ${fromHex} (text): ${parsed}`;
+      } else if (contentType === ContentType.JSON) {
+        display = `From ${fromHex} (JSON): ${JSON.stringify(parsed)}`;
+      } else if (contentType === ContentType.FILE) {
+        display = `From ${fromHex} (file): ${parsed.name} (${parsed.data.length} bytes)`;
+      } else {
+        const hex = Array.from(content.slice(0, 16)).map(b => b.toString(16).padStart(2,'0')).join(' ');
+        display = `From ${fromHex} (raw, ${content.length} bytes): ${hex}${content.length > 16 ? '...' : ''}`;
+      }
+      addLog(display, 'message');
+    });
+
+    sendBtn.onclick = async () => {
+      const targetHex = targetKeyInput.value.trim().replace(/\s+/g, '');
+      if (!targetHex) { addLog('Target key required', 'error'); return; }
+      if (!/^[0-9a-fA-F]{64}$/.test(targetHex)) { addLog('Invalid target key hex', 'error'); return; }
+      const type = dataTypeSelect.value;
+      try {
+        if (type === 'text') {
+          const text = textContent.value.trim();
+          if (!text) { addLog('Text required', 'error'); return; }
+          client.sendText(targetHex, text);
+          addLog(`Sent text to ${targetHex.slice(0,8)}`, 'sent');
+          textContent.value = '';
+        } else if (type === 'json') {
+          const jsonStr = jsonContent.value.trim();
+          if (!jsonStr) { addLog('JSON required', 'error'); return; }
+          const obj = JSON.parse(jsonStr);
+          client.sendJSON(targetHex, obj);
+          addLog(`Sent JSON to ${targetHex.slice(0,8)}`, 'sent');
+          jsonContent.value = '';
+        } else if (type === 'file') {
+          const file = fileContent.files?.[0];
+          if (!file) { addLog('File required', 'error'); return; }
+          await client.sendFileAsync(targetHex, file);
+          addLog(`Sent file to ${targetHex.slice(0,8)}: ${file.name}`, 'sent');
+          fileContent.value = '';
+        }
+      } catch (e) {
+        addLog(`Error: ${e.message}`, 'error');
+      }
+    };
+
+    sendEncryptedBtn.onclick = async () => {
+      const targetHex = targetKeyEnc.value.trim().replace(/\s+/g, '');
+      const encKeyHex = targetEncKey.value.trim().replace(/\s+/g, '');
+      if (!targetHex || !encKeyHex) { addLog('Target key and encryption key required', 'error'); return; }
+      if (!/^[0-9a-fA-F]{64}$/.test(targetHex) || !/^[0-9a-fA-F]{64}$/.test(encKeyHex)) {
+        addLog('Invalid hex keys', 'error'); return;
+      }
+      const type = dataTypeEnc.value;
+      try {
+        if (type === 'text') {
+          const text = textContentEnc.value.trim();
+          if (!text) { addLog('Text required', 'error'); return; }
+          await client.sendEncryptedText(targetHex, encKeyHex, text);
+          addLog(`Sent encrypted text to ${targetHex.slice(0,8)}`, 'sent');
+          textContentEnc.value = '';
+        } else if (type === 'json') {
+          const jsonStr = jsonContentEnc.value.trim();
+          if (!jsonStr) { addLog('JSON required', 'error'); return; }
+          const obj = JSON.parse(jsonStr);
+          await client.sendEncryptedJSON(targetHex, encKeyHex, obj);
+          addLog(`Sent encrypted JSON to ${targetHex.slice(0,8)}`, 'sent');
+          jsonContentEnc.value = '';
+        } else if (type === 'file') {
+          const file = fileContentEnc.files?.[0];
+          if (!file) { addLog('File required', 'error'); return; }
+          await client.sendEncryptedFileAsync(targetHex, encKeyHex, file);
+          addLog(`Sent encrypted file to ${targetHex.slice(0,8)}: ${file.name}`, 'sent');
+          fileContentEnc.value = '';
+        }
+      } catch (e) {
+        addLog(`Error: ${e.message}`, 'error');
+      }
+    };
+
+    if (client.isConnected()) {
+      connectionStatus.textContent = 'Connected';
+      connectionStatus.className = 'status success';
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = false;
+    }
+  </script>
+</body>
+</html>
